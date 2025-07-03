@@ -1,0 +1,257 @@
+---
+title: "Balatro Joker Effect Data Analysis"
+author: "Eric Saravia"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+## Introduction
+
+Balatro is a popular card game that fuses poker and ability cards (
+jokers, planets, tarots, and spectrals ) among other elements in order
+to masterfully create combinations that ensure you obliterate your round
+score.
+
+Playing the game allowed me to notice that there were certain Joker
+cards that implicit synergy between them. An example of this is the
+"Four Fingers" joker card, which says that all straights and flushes can
+be made with 4 cards. the "Square Joker" states that this Joker gains +4
+chips if the hand being played has exactly 4 cards. I would claim that
+these two cards have high synergy between them in the game, though there
+are other cards that obviously don't necessary have that.
+
+That got me thinking about other potential synergies among other jokers
+within the game, and wanted to create my own synergy tag system between
+the joker cards.
+
+**1. Can we find synergies among Jokers, and how many cards are
+universally** **standalone Joker cards which don't really have synergies
+?**
+
+**2. Would Joker pairs have stronger synergies based on the number of
+tags they shared ?**
+
+## Web Scraping - Obtaining joker data from wiki
+
+```{r scraping, message = FALSE, warning = FALSE}
+library(tidyverse)
+library(rvest)
+library(stringr)
+
+url <- "https://balatrogame.fandom.com/wiki/Jokers"
+page <- read_html(url)
+
+# grabs the third table that appears on the site
+joker_table = page %>%
+  html_elements("table") %>% .[-3]
+
+# Get all table rows (skipping the header)
+joker_rows <- joker_table %>% html_nodes("tr") %>% .[-1]
+
+
+joker_df <- joker_rows %>% 
+  map_df(~{
+    cells <- html_nodes(.x, "td") %>% html_text2() %>% str_squish()
+    tibble(
+      name = cells[2],
+      effect = cells[3],
+      cost = cells[4],
+      rarity = cells[5],
+      unlock_requirement = cells[6],
+      type = cells[7],
+      activation = cells[8]
+    )
+    
+  })
+
+head(joker_df)
+
+```
+
+After evaluation of table, I thought the data had been extract pretty
+well except for a few things:
+
+1.  Removing the first two rows that aren't necessary
+2.  Having the original Joker's columns overwritten with correct info
+3.  Translating the type column in order to properly assess cards
+
+```{r eval=FALSE}
+
+joker_df <- joker_df[-c(1:2),] # removing rows 1 & 2
+
+# Changing row 1
+joker_df$effect[1] <- "+4 Mult"
+joker_df$rarity[1] <- "Common"
+
+# translating type column 
+joker_df <- joker_df %>%
+  mutate(
+    type = case_when(
+      type == "+c" ~ "Chips",
+      type == "+m" ~ "Additive Mult",
+      type == "Xm" ~ "Multiplicative Mult",
+      type == "++" ~ "Chips and Additive Mult",
+      type == "!!" ~ "Effect",
+      type == "..." ~ "Retrigger",
+      type == "+$" ~ "Economy",
+      TRUE ~ type
+    )
+  )
+
+
+```
+
+# Creating our "synergy" patterns in order to evaluate Joker cards among themselves.
+
+```{r eval=FALSE}
+tag_patterns <- list(
+  "4-card hand" = regex("four cards|4 cards", ignore_case = TRUE),
+  "flush synergy" = regex("flush", ignore_case = TRUE),
+  "straight synergy" = regex("straight", ignore_case = TRUE),
+  "face card synergy" = regex("face card", ignore_case = TRUE),
+  "king card synergy" = regex("king", ignore_case = TRUE),
+  # ensure that the value is referring to a played card
+  "even card synergy" = regex("(each played|each card|played cards|cards of value|card with value).*\\b(2|4|6|8|10)\\b", ignore_case = TRUE),
+  "odd card synergy" = regex("(each played|each card|played cards|cards of value|card with value).*\\b(1|3|5|7|9)\\b", ignore_case = TRUE),
+  "ace card synergy" = regex("ace", ignore_case = TRUE),
+  "diamonds card synergy" = regex("diamond", ignore_case = TRUE),
+  "hearts card synergy" = regex("heart", ignore_case = TRUE),
+  "spades card synergy" = regex("spade", ignore_case = TRUE),
+  "clubs card synergy" = regex("club", ignore_case = TRUE),
+  "glass card synergy" = regex("glass card", ignore_case = TRUE),
+  "stone card synergy" = regex("stone card", ignore_case = TRUE),
+  "discard synergy" = regex("discard", ignore_case = TRUE),
+  "joker synergy" = regex("each Joker card |leftmost joker|joker to the right|Jokers each", ignore_case = TRUE),
+  "probability synergy" = regex("probabilit|chance", ignore_case = TRUE),
+  "four of a kind synergy" = regex("four of a kind", ignore_case = TRUE),
+  "three of a kind synergy" = regex("three of a kind", ignore_case = TRUE),
+  "two pair synergy" = regex("two pair", ignore_case = TRUE),
+  "high card synergy" = regex("high card", ignore_case = TRUE),
+  "straight flush synergy" = regex("straight flush", ignore_case = TRUE),
+  "poker hand synergy" = regex("poker hand", ignore_case = TRUE),
+  "cards held synergy" = regex("held in hand", ignore_case = TRUE),
+  "planet card synergy" = regex("planet", ignore_case = TRUE),
+  "uncommon synergy" = regex("uncommon", ignore_case = TRUE)
+)
+
+# creating the tags column that will be used to identify potential synergies
+joker_df <- joker_df %>%
+  rowwise() %>%
+  mutate(
+    tags = {
+      matched_tags <- names(tag_patterns)[
+        vapply(tag_patterns, function(p) str_detect(effect, p), logical(1))
+      ]
+      list(if (length(matched_tags) > 0) matched_tags else "universal")
+    }
+  ) %>%
+  ungroup()
+
+
+```
+
+```{r eval = FALSE}
+# Unnest the tags list column to long format
+tag_counts <- joker_df %>%
+  select(name, tags) %>%
+  unnest(tags) %>%
+  count(tags, sort = TRUE)
+
+tag_counts
+
+```
+
+## Some takeaways from the table above:
+
+1.  Even vs. Odd: 5 more Jokers reference odd numbers than even numbers,
+    suggesting odd-number-related effects might be found more frequently
+    in game play.
+
+2.  Suit synergy: Clubs are the preferable choice when looking for joker
+    synergies, Hearts and Diamonds are slightly less common.
+
+3.  Favorable hand Among Jokers effects: Straight and flush hands
+    (respectively) are the most favorable hands, cumulatively being ≈62%
+    of the all hands synergy.
+
+4.  Out of the 150 jokers in game, 59 (≈40%) don't have any identified
+    synergies based on the tags system created here. This maybe indicate
+    that many Jokers offer standalone values and have abilities outside
+    the typical mechanics described.
+
+## Looking to find strong synergies between Joker pairs
+
+```{r}
+# creating new df w/o cards with no 'synergies'
+library(purrr)
+
+tagged_jokers <- joker_df %>%
+  filter(map_lgl(tags, ~ !"universal" %in% .x))
+
+
+```
+
+```{r warning =FALSE}
+library(ggplot2)
+library(dplyr)
+
+# Get exactly the top 5 pairs
+top_5_pairs <- joker_synergy_pairs %>%
+  arrange(desc(n)) %>%
+  slice_head(n = 5) %>%
+  mutate(pair = paste(name.x, "×", name.y))
+
+# Create bar chart
+ggplot(top_5_pairs, aes(x = reorder(pair, n), y = n)) +
+  geom_col(fill = "#45876a") +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Highest Tag Count Among Jokers",
+    subtitle = "based on 'synergy' pattern system",
+    x = "Joker Pairs",
+    y = "Shared Tags"
+  ) +
+  theme(
+    text = element_text(size = 12, family = "sans"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(color = "#ff9800", 
+                              size = 18, 
+                              hjust = 0, 
+                              face = "bold"),
+    plot.subtitle = element_text(hjust = 0)
+    
+  ) 
+
+
+```
+
+# Some takeaways from the visualization above:
+
+1.  Tag overlap doesn't guarantee synergy strength: While Flower Pot and
+    Smeared Joker share 4 tags—the highest count—this reflects
+    mechanical compatibility rather than power level. Their pairing
+    enhances Flower Pot's X3 multiplier flexibility, but jokers with
+    fewer shared tags may actually create stronger combinations. This
+    suggests shared tags indicate synergy potential rather than synergy
+    quality.
+
+2.  Hub jokers enable multiple synergy paths: Three jokers (Flower Pot,
+    Smeared Joker, and Blackboard) appear multiple times in the bar
+    chart, indicating they have a 'link' within the 'synergy' system.
+    This suggests focusing on these versatile jokers could enable
+    flexible deck-building strategies, as players can pivot between
+    different synergy combinations depending on what cards become
+    available. There are 441 total synergy Joker pairs in the game.
+
+3.  Accessibility of High-Synergy Pairs: Notably, all jokers in the top
+    5 pairings are common or uncommon rarity, making these synergies
+    highly accessible to players. This accessibility factor
+    significantly increases the practical value of these findings, as
+    players can reliably build strategies around these combinations
+    rather than relying on rare drops. This suggests the synergy pattern
+    system identifies not just theoretical optimal pairings, but
+    actionable strategic options for consistent game play.
